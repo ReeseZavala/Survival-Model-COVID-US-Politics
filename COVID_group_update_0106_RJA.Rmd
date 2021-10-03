@@ -1,0 +1,264 @@
+---
+title: "Project Update"
+author: "Jenna, Reese, Alper"
+date: "1/4/2021"
+output: pdf_document
+
+---
+
+
+
+```{r setup, include=FALSE}
+library(survival)
+library(lubridate)
+library(tidyverse)
+library(ggplot2)
+library(survminer)
+library(broom)
+library(knitr)
+```
+
+
+
+\section{Intro}
+We will be running two analyses, one set of survival models for Democrats and one set for Republicans. Our corpus of tweets contained about 20k tweets from February-July 2020 from 104 Democratic and 22 GOP local officials. Below is our initial analysis of the GOP tweets. Though we have more covariates to add, our initial analysis examines time to partisan convergence. Unsurprising given the small sample size for GOP, none of our demographic covariates are statistically significant. Even so, to verify our understanding, our exponentiated hazard ratios indicate that men are 5 times more likely to converge than women, white officials are .88 times more likely to converge than non-white, and city council members are 4 times more like to converge than mayors. We then test the proportional hazards assumption for our model. The test is statistically significant for the white variable, meaning our assumptions might be violated. We can also graph the scaled Schoenfeld residuals against transformed time for a more illustrative look. However, we're not clear on how to interpret these plots.
+
+```{r Part1, echo=FALSE}
+rm(list = ls())
+
+Peeps <- read.csv("C:\\Users\\rzava\\Box Sync\\Fall 2020\\QPMII\\Project\\COVID data\\HandleInfo.csv")
+CData <- read.csv("C:\\Users\\rzava\\Box Sync\\Fall 2020\\QPMII\\Project\\COVID data\\CA_cases.csv")
+CitCount <- read.csv("C:\\Users\\rzava\\Box Sync\\Fall 2020\\QPMII\\Project\\COVID data\\list-cities-ca.csv")
+KMCTweet <- read.csv("C:\\Users\\rzava\\Box Sync\\Fall 2020\\QPMII\\Project\\ConvergingData\\KaplenMeier_FULLandCases.csv")
+
+
+# Factorizing KMCTweet
+
+KMCTweet <- KMCTweet%>%
+  mutate(pos.fac = ifelse(pos.fac == "mayor", 0, 1))
+
+
+
+# Create survival object Surv(t1 = first tweet date, t2 = last tweet date [unless converged], 
+#                                                                             status = pred2) 
+outcome <- Surv(as.integer(Rtweets$duration)+1, Rtweets$DV)
+
+
+# Only Dem DataFrame and Outcomes
+Rtweets.DEM <- Rtweets %>%
+  filter(party == 1)
+outcome.DEM <- Surv(as.integer(Rtweets.DEM$duration)+1, Rtweets.DEM$DV)
+```
+We used a novel data set compiled by a team of researchers at Washington University in St. Louis and the California Institute of Technology. This data set is a collection of tweets published by California mayors and city council members between 2009 to present. The data set contains twitter data as well as the party identification (if any), geographic location of each local politician, and the politician's race and gender.
+\par
+We also needed to include data regarding California's COVID-19 cases and mortality rates. To do so, we merged data obtained from the California Department of Health with our Twitter data, matching the county in the health department data to the city in our twitter data. This resulted in a novel data set consisting of 20,694 tweets published from February 2020 to July 2020. Only city council members and mayors with explicit partisanship were included in the study, leaving us with 1691 tweets from 22 Republicans and 19,003 tweets from 104 Democrats. We selected this date range for our study for several reasons. While COVID-19 became part of the national discourse in March of 2020, California registered its first known case of the virus in February. We carry our analysis to July in order to capture the growing concern and rise in cases during the virus's so-called first wave in the spring of 2020. 
+\subsection{Predicting Convergence}
+Prior to running our statistical models we needed to classify whether each of the 20,694 tweets converged along party lines. We created separate training data sets for each political party consisting of 1,050 total tweets, not limited to tweets explicitly mentioning COVID-19. We then hand-coded these tweets as a 1 if the messaging converged to Democratic (Republican) national rhetoric and 0 if it did not (or if the tweet was not related to the pandemic). We classified Democratic convergence as tweets referencing safety, staying at home, protecting families, or pulling through together. Republican convergence was classified as focusing on the economic impact of the pandemic, as well as criticism of restrictions, maintaining personal freedoms, or skepticism of the virus. A full code book can be found in Appendix A.
+\par
+In predicting convergence, we run separate penalized models for Democrat and Republican tweets. To this end, we hand-coded 550 tweets, of which consists of 300 Democrat and 250 Republican tweets based on our codebook. To get the best predictions, we run each possible value of the alpha parameter and cut-off points for the binary result by simulation. Then we tried to we choose the cut-off points and alpha that maximize the accuracy with respect to true positive and true negative rates. 
+\par
+Note that while our model for the Democrat convergence has 0.8 accuracy with 0.41 true positive rate, and 0.91 true negative rate, our Republican convergence prediction has 0.88 accuracy with 0.6 true positive rate, and 0.9 true negative rate.
+
+\section{Independent Variables}
+
+There are a number of demographic variables in our initial corpus of twitter. As time-invariant fixed variables, we include 1) party (dummy, 1 = Democrat),  2) position in office (1 = mayor, 2 = city council member), 3) White (dummy), and 4) Male (dummy). These variables were each extracted from our original corpus of tweets. We also include time-variant covariates (TVCs) to capture the effect of COVID-19 on party convergence. We include variables for both daily cases and total cases, as well as daily deaths and total deaths. 
+
+We did not model these variables as time-dependent variables with decay functions as we assume that within 5 months period, the effect of these variables would not vary over time.
+
+\section{Empirical Analysis Intro}
+
+What factors affect the time it takes until a local politician's discourse converge to the party rethoric? In answering this question we use the Cox proportional hazards models. We test our hypothesis that whether fixed characteristics or time-varying COVID cases numbers affect the probability of convergence to party discourse. We employ the Cox model instead of its parametric alternatives as 1) it makes fewer assumptions about the distributional form of the baseline hazard rate, 2) it handles proportional hazards assumptions better, and 3) it is better for working with `tied' observations (those with the identitical values) (Box-Steffensmeier $\&$ Jones, 2004; Golub, 2008). In doing so, we modelled the survival time as the duration of non-covergence days until a potential converge to party rhetoric on COVID (failure event) and the treatment is the basic characteristics of local politicians the COVID statistics of their respective local area.
+
+\section{Fitting Models} 
+
+```{r Part2, echo = F}
+# Survival Curve Trend for All
+# ggsurvplot(
+#     fit = survfit(outcome ~ 1, data = Rtweets), 
+#     xlab = "Days", 
+#     ylab = "Overall survival probability",)
+# Survival Curve w Party and Position
+# ggsurvplot(
+#     fit = survfit(outcome ~ party + pos.fac, data = Rtweets), 
+#     xlab = "Days", 
+#     ylab = "Overall survival probability")
+# Survival Curve w Party and White
+# ggsurvplot(
+#     fit = survfit(outcome ~ party + white, data = Rtweets), 
+#     xlab = "Days", 
+#     ylab = "Overall survival probability")
+# Survival Curve w Party and Male
+# ggsurvplot(
+#     fit = survfit(outcome ~ party + male, data = Rtweets), 
+#     xlab = "Days", 
+#     ylab = "Overall survival probability")
+```
+ 
+As time-invariant fixed variables, we include 1) party, 2) position in office, 3) whether being white or not, and 4) whether being a male or not. in survival curves above, it can be seen that being Democrat party affliated politican leads earlier convergence - the failure -. Moreover, being female, being white, and being city councilar appear to be increasing the risk of convergence. 
+To confirm these expectations, we run the Cox proportional hazards model with whether being male, democrat, white, and city councilar compared to being mayor. The first model with both Democrat and Republican politicians with time-fixed variables shows that neither of these variables are statistically significant in the $95\%$ confidence interval. Moreover, let's check the hazard ratios, which are exponentiated coefficients that indicates that a particular variable increases the risk of converges if its  value is above 1 and indicates that it decreases the risk of converge with a value below 1. See that while being male has an exponentiated value smaller than 1, being democrat, white, and being city councilar have a positive effect. 
+
+
+Now we include the COVID-19 data. First we'll fit the survival curves, then run the Cox Models.
+```{r DecayFunction}
+# Just Dems
+KMCTweet.DEM <- KMCTweet%>%
+  filter(party == 1)
+#total cases violates ph assumption, correct
+KMCTweet <- KMCTweet%>%
+  mutate(log.totalCases = log(totalCases + .0001))%>% 
+  mutate(log.DurationXcases = log(as.numeric(duration2)) * log.totalCases)
+
+
+
+
+# Calculate new survival function
+DemOutcome <- Surv(as.integer(KMCTweet.DEM$duration)+1, KMCTweet.DEM$DV)
+full_outcome <- Surv(as.integer(KMCTweet$duration)+1, KMCTweet$DV)
+
+
+# Survival Curve Trend for All
+ggsurvplot(
+    fit = survfit(full_outcome ~ 1, data = KMCTweet),
+    xlab = "Days",
+    ylab = "Overall survival probability",)
+# # Survival Curve w daily cases
+ggsurvplot(
+    fit = survfit(DemOutcome ~ male + pos.fac, data = KMCTweet.DEM),
+    xlab = "Days",
+    ylab = "Overall survival probability",
+    title = "Democrat Survival Breakdown -- Position and Gender")
+# # # Survival Curve w total cases
+# ggsurvplot(
+#     fit = survfit(full_outcome ~ party + male, data =coughTweet),
+#     xlab = "Days",
+#     ylab = "Overall survival probability")
+# # # Survival Curve w daily deaths
+# ggsurvplot(
+#     fit = survfit(full_outcome ~ party + pos.fac, data =coughTweet),
+#     xlab = "Days",
+#     ylab = "Overall survival probability")
+
+```
+
+\section{The Model}
+
+
+To say someone converged from one day's statistics might not be theoretically robust.  We run the model again with fewer controls.
+
+
+
+```{r Part3-2-2}
+
+  
+
+
+# Fit Cox Model 1 -- Everyone w/o total cases
+coxF1 <- coxph(full_outcome ~ male + party + white + pos.fac + logPop, data =KMCTweet, cluster = county)
+tidy(coxF1, exp = T) %>%
+  kable()
+check_f1 <- cox.zph(coxF1, transform='identity')
+check_f1
+# Fit Cox Model 1 -- Everyone w/ total cases
+coxF2 <- coxph(full_outcome ~ male + party + white + pos.fac + logPop + totalCases, data =KMCTweet, cluster = county)
+tidy(coxF2, exp = T) %>%
+  kable()
+check_f2 <- cox.zph(coxF2, transform='identity')
+check_f2
+# Fit Cox Model 1 -- Everyone w/ total cases -- correcting for cases violation
+coxF2.1 <- coxph(full_outcome ~ male + party + white + pos.fac + logPop + totalCases + log.DurationXcases, data =KMCTweet, cluster = county)
+tidy(coxF2.1, exp = T) %>%
+  kable()
+check_f2.1 <- cox.zph(coxF2.1, transform='identity')
+check_f2.1 ##no more violations, cool
+
+# Fit Cox Model 1 -- DEMSs w/o total cases
+coxF3 <- coxph(DemOutcome ~ male + white + pos.fac + logPop, data =KMCTweet.DEM, cluster = county)
+tidy(coxF3, exp = T) %>%
+  kable()
+check_f3 <- cox.zph(coxF3, transform='identity')
+check_f3
+
+# Fit Cox Model 1 -- DEMSs w/ total cases
+coxF4 <- coxph(DemOutcome ~ male + white + pos.fac + logPop + totalCases, data =KMCTweet.DEM, cluster = county)
+tidy(coxF4, exp = T) %>%
+  kable()
+check_f4 <- cox.zph(coxF4, transform='identity')
+check_f4
+
+
+```
+
+Why are our COVID variables less than 1?  
+
+
+
+
+
+
+Concerning that the effect might be different when we only analyze the Democrat subset, we run the Cox proportional hazards model in our third model with whether being male, white, and city councilar compared to being mayor only for the Democrat Party affliated politicians. The model shows that the hazard ratios are in the same direction with the first model. See that the hazard ratio of being white is $1.63$, which means that being white increases the hazard ratio of converge for a Democrat politician by $63\%$ compared to the baseline. See that only $44\%$ of democrat politicians are white overall.
+
+
+```{r Part3-4}
+coughDem <- coughTweet %>%
+  filter(party == 1)
+
+full_outcome.DEM <- Surv(as.integer(coughDem$duration)+1, coughDem$DV)
+
+# Fit Cox Model 4
+coxF4 <- coxph(full_outcome.DEM ~ male  + white + pos.fac + totalCases.dec + dailyCases.dec
+               + totalDeaths.dec + dailyDeaths.dec, data =coughDem, cluster = county)
+# coxF4
+
+
+
+
+# tidy(coxph(full_outcome.DEM ~ male  + white + pos.fac + totalCases.dec + dailyCases.dec
+#                + totalDeaths.dec + dailyDeaths.dec, data =coughDem, cluster = county), exp = TRUE) %>%
+#   kable()
+
+tidy(coxph(full_outcome.DEM ~ male  + white + pos.fac + totalCases.dec + totalDeaths.dec
+           , data =coughDem, cluster = county), exp = TRUE) %>%
+  kable()
+```
+
+
+# Robustness Check
+
+```{r Part4}
+################################################
+##   Check Model Assumptions for Model coxF1  ##
+################################################
+
+#coxF2 <- coxph(outcome ~ male  + party + white + pos.fac, data =Rtweets)
+
+ggcoxzph(check_f2.1, var = "totalCases", title = "Proportional Hazard Assumption Check Model 2.1") # how to interpret?
+
+
+
+
+check_hr <- cox.zph(coxF2.1, transform='identity')
+ggcoxzph(check_hr, var = "white") # how to interpret?
+check_hr
+
+
+# Testing influential observations
+ggcoxdiagnostics(coxF2.1, type = "dfbetas", linear.predictions = TRUE, title = "Influential Cases Model 2.1") # how to interpret?
+#  type=“dfbetas” produces the estimated changes in the coefficients divided by their standard errors.
+
+# type deviance checks outliers by looking at deviance residuals
+ggcoxdiagnostics(coxF2, type = "deviance", linear.predictions = FALSE) #pattern should be symmetric about 0
+
+```
+
+\bigskip
+
+# Further Research
+
+%Homola and Gill -- Frailty model
+%Ask Bryant about city characteristics dataset
+%Limits of our findings
+
+
+\bigskip
+
+# References
